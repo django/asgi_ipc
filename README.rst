@@ -12,10 +12,10 @@ You'll need to instantiate the channel layer with a path prefix to create
 IPC objects underneath. This path must be writable by any user running this
 backend.
 
-* ``path``: Path prefix to use for IPC objects. Defaults to ``/tmp/asgi/``.
+* ``prefix``: Prefix to use for IPC objects in the root namespace. Defaults to ``asgi``.
 
 Example::
 
     channel_layer = IPCChannelLayer(
-        prefix="/tmp/asgi-mine/",
+        prefix="aeracode",
     )
