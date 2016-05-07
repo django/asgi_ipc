@@ -247,7 +247,7 @@ class MemoryDatastructure(object):
         """
         # Make the mmap empty enough that get will ignore it
         self.mmap.seek(0)
-        self.mmap.write("\0\0\0\0\0\0\0\0")
+        self.mmap.write(b"\0\0\0\0\0\0\0\0")
         # Unlink and remake the semaphore
         self.semaphore.unlink()
         self.semaphore = posix_ipc.Semaphore(
@@ -259,9 +259,11 @@ class MemoryDatastructure(object):
 
     def __del__(self):
         """
-        Explicitly closes the sempahore and shared memory area.
+        Explicitly closes the shared memory area.
+
+        The semaphore is not closed as this is not threadsafe; closing it
+        prevents any other layers in the same process from seeing it.
         """
-        self.semaphore.close()
         self.mmap.close()
         self.shm.close_fd()
 
