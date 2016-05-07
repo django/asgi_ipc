@@ -16,8 +16,16 @@ __version__ = pkg_resources.require('asgi_ipc')[0].version
 
 class IPCChannelLayer(object):
     """
-    Posix IPC backed channel layer, using the posix_ipc module and
-    MessageQueues.
+    Posix IPC backed channel layer, using the posix_ipc module's shared memory
+    and sempahore components.
+
+    It uses mmap'd shared memory areas to store msgpack'd versions of the
+    datastructures, with a semaphore as a read/write lock to control access
+    to the data area (all operations currently lock the entire memory segment).
+
+    POSIX IPC Message Queues are not used as their default limits under most
+    kernels are too small (8KB messages and 256 queues max); channels is a
+    little... heavier than that.
     """
 
     def __init__(self, prefix="asgi", expiry=60, group_expiry=86400, capacity=10):
@@ -143,14 +151,14 @@ class IPCChannelLayer(object):
         Returns a MemoryList object for the channel
         """
         self.channel_set.add(self._channel_path(channel))
-        return MemoryList(self._channel_path(channel))
+        return MemoryList(self._channel_path(channel), size=1024*1024*self.capacity)
 
     def _group_dict(self, group):
         """
         Returns a MemoryDict object for the named group
         """
         self.group_set.add(self._group_path(group))
-        return MemoryDict(self._group_path(group))
+        return MemoryDict(self._group_path(group), size=1024*1024*10)
 
     def __str__(self):
         return "%s(hosts=%s)" % (self.__class__.__name__, self.hosts)
@@ -162,8 +170,8 @@ class MemoryDatastructure(object):
     dicts for group membership, and lists for channels.
     """
 
-    # Maximum size of the datastructure
-    size = 1024 * 1024 * 20
+    # Maximum size of the datastructure. Try and override to not use up memory.
+    size = 1024 * 1024 * 5
 
     # How long to wait for the semaphore before declaring deadlock and flushing
     death_timeout = 2
@@ -174,9 +182,11 @@ class MemoryDatastructure(object):
     # Version signature - 8 bytes.
     signature = None
 
-    def __init__(self, path):
+    def __init__(self, path, size=None):
         if self.signature is None:
             raise ValueError("No signature for this memory datastructure")
+        if size:
+            self.size = size
         self.path = path
         self.semaphore = posix_ipc.Semaphore(
             self.path + "-semaphore",
