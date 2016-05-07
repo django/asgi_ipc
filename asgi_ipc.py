@@ -26,7 +26,7 @@ class IPCChannelLayer(object):
         self.capacity = capacity
         self.group_expiry = group_expiry
         # Set that contains all queues we created so we can flush them
-        self.queue_set = MemorySet("/%s-queueset" % self.prefix)
+        self.channel_set = MemorySet("/%s-channelset" % self.prefix)
         # Set containing all groups to flush
         self.group_set = MemorySet("/%s-groupset" % self.prefix)
 
@@ -45,11 +45,11 @@ class IPCChannelLayer(object):
         assert isinstance(message, dict), "message is not a dict"
         assert isinstance(channel, six.text_type), "%s is not unicode" % channel
         # Write message into the correct message queue
-        queue = self._message_queue(channel)
-        try:
-            queue.send(self.serialize([message, time.time() + self.expiry]), timeout=0)
-        except posix_ipc.BusyError:
+        channel_list = self._channel_list(channel)
+        if len(channel_list) >= self.capacity:
             raise self.ChannelFull
+        else:
+            channel_list.append([message, time.time() + self.expiry])
 
     def receive_many(self, channels, block=False):
         if not channels:
@@ -59,15 +59,15 @@ class IPCChannelLayer(object):
         random.shuffle(channels)
         # Try to pop off all of the named channels
         for channel in channels:
-            queue = self._message_queue(channel)
+            channel_list = self._channel_list(channel)
             # Keep looping on the channel until we hit no messages or an unexpired one
             while True:
                 try:
-                    message, expires = self.deserialize(queue.receive(0)[0])
+                    message, expires = channel_list.popleft()
                     if expires <= time.time():
                         continue
                     return channel, message
-                except posix_ipc.BusyError:
+                except IndexError:
                     break
         return None, None
 
@@ -123,28 +123,10 @@ class IPCChannelLayer(object):
         """
         Deletes all messages and groups.
         """
-        for path in self.queue_set:
-            try:
-                posix_ipc.MessageQueue(path).unlink()
-            except posix_ipc.ExistentialError:
-                # Already deleted.
-                pass
+        for path in self.channel_set:
+            MemoryList(path).flush()
         for path in self.group_set:
             MemoryDict(path).flush()
-
-    ### Serialization ###
-
-    def serialize(self, message):
-        """
-        Serializes message to a byte string.
-        """
-        return msgpack.packb(message, use_bin_type=True)
-
-    def deserialize(self, message):
-        """
-        Deserializes from a byte string.
-        """
-        return msgpack.unpackb(message, encoding="utf8")
 
     ### Internal functions ###
 
@@ -156,18 +138,12 @@ class IPCChannelLayer(object):
         assert isinstance(group, six.text_type)
         return "/%s-group-%s" % (self.prefix, group.encode("ascii"))
 
-    def _message_queue(self, channel):
+    def _channel_list(self, channel):
         """
-        Returns an IPC MessageQueue object for the given channel.
+        Returns a MemoryList object for the channel
         """
-        self.queue_set.add(self._channel_path(channel))
-        return posix_ipc.MessageQueue(
-            self._channel_path(channel),
-            flags=posix_ipc.O_CREAT,
-            mode=0o660,
-            max_messages=self.capacity,
-            max_message_size=1024*1024,  # 1MB
-        )
+        self.channel_set.add(self._channel_path(channel))
+        return MemoryList(self._channel_path(channel))
 
     def _group_dict(self, group):
         """
@@ -180,16 +156,27 @@ class IPCChannelLayer(object):
         return "%s(hosts=%s)" % (self.__class__.__name__, self.hosts)
 
 
-class MemoryDict(object):
+class MemoryDatastructure(object):
     """
-    A dict-like object that backs itself onto a shared memory segment by path.
-    Uses a semaphore to lock and unlock it and msgpack to encode values.
+    Generic memory datastructure class; used for sets for flush tracking,
+    dicts for group membership, and lists for channels.
     """
 
+    # Maximum size of the datastructure
     size = 1024 * 1024 * 20
+
+    # How long to wait for the semaphore before declaring deadlock and flushing
     death_timeout = 2
 
+    # Datatype to store in here
+    datatype = dict
+
+    # Version signature - 8 bytes.
+    signature = None
+
     def __init__(self, path):
+        if self.signature is None:
+            raise ValueError("No signature for this memory datastructure")
         self.path = path
         self.semaphore = posix_ipc.Semaphore(
             self.path + "-semaphore",
@@ -217,9 +204,9 @@ class MemoryDict(object):
             # The first four bytes should be "ASGD", followed by four bytes
             # of version (we're looking for 0001)
             signature = self.mmap.read(8)
-            if signature != b"ASGD0001":
+            if signature != self.signature:
                 # Start fresh
-                return {}
+                return self.datatype()
             else:
                 # There should then be four bytes of length
                 size = struct.unpack("!I", self.mmap.read(4))[0]
@@ -228,7 +215,7 @@ class MemoryDict(object):
             self.semaphore.release()
 
     def _set_value(self, value):
-        assert isinstance(value, dict)
+        assert isinstance(value, self.datatype)
         try:
             self.semaphore.acquire(self.death_timeout)
         except posix_ipc.BusyError:
@@ -236,7 +223,7 @@ class MemoryDict(object):
             self.semaphore.acquire(0)
         try:
             self.mmap.seek(0)
-            self.mmap.write(b"ASGD0001")
+            self.mmap.write(self.signature)
             towrite = msgpack.packb(value, use_bin_type=True)
             self.mmap.write(struct.pack("!I", len(towrite)))
             self.mmap.write(towrite)
@@ -260,14 +247,41 @@ class MemoryDict(object):
             initial_value=1,
         )
 
+    def __del__(self):
+        """
+        Explicitly closes the sempahore and shared memory area.
+        """
+        self.semaphore.close()
+        self.mmap.close()
+        self.shm.close_fd()
+
+    def flush(self):
+        self._set_value(self.datatype())
+
     def __iter__(self):
         return iter(self._get_value())
 
     def __contains__(self, item):
         return item in self._get_value()
 
-    def flush(self):
-        self._set_value({})
+    def __getitem__(self, key):
+        return self._get_value()[key]
+
+    def __setitem__(self, key, value):
+        d = self._get_value()
+        d[key] = value
+        self._set_value(d)
+
+    def __len__(self):
+        return len(self._get_value())
+
+
+class MemoryDict(MemoryDatastructure):
+    """
+    Memory backed dict. Used for group membership.
+    """
+
+    signature = b"ASGD0001"
 
     def items(self):
         return self._get_value().items()
@@ -284,14 +298,6 @@ class MemoryDict(object):
             del value[item]
         self._set_value(value)
 
-    def __getitem__(self, key):
-        return self._get_value()[key]
-
-    def __setitem__(self, key, value):
-        d = self._get_value()
-        d[key] = value
-        self._set_value(d)
-
 
 class MemorySet(MemoryDict):
     """
@@ -302,3 +308,23 @@ class MemorySet(MemoryDict):
         value = self._get_value()
         value[item] = None
         self._set_value(value)
+
+
+class MemoryList(MemoryDatastructure):
+    """
+    Memory-backed list. Used for channels.
+    """
+
+    signature = b"ASGL0001"
+
+    datatype = list
+
+    def append(self, item):
+        value = self._get_value()
+        value.append(item)
+        self._set_value(value)
+
+    def popleft(self):
+        value = self._get_value()
+        self._set_value(value[1:])
+        return value[0]
