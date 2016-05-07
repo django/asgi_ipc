@@ -188,6 +188,8 @@ class MemoryDatastructure(object):
         if size:
             self.size = size
         self.path = path
+        # TODO: Investigate having separate read and write locks to allow
+        # concurrent reads.
         self.semaphore = posix_ipc.Semaphore(
             self.path + "-semaphore",
             flags=posix_ipc.O_CREAT,
@@ -203,6 +205,8 @@ class MemoryDatastructure(object):
         self.mmap = mmap.mmap(self.shm.fd, self.size)
 
     def _get_value(self):
+        # TODO: Look into version number for contents coupled with internal
+        # cache to avoid re-reading mmap for every access
         try:
             self.semaphore.acquire(self.death_timeout)
         except posix_ipc.BusyError:
