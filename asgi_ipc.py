@@ -8,6 +8,7 @@ import random
 import six
 import string
 import struct
+import time
 
 
 __version__ = pkg_resources.require('asgi_ipc')[0].version
@@ -44,7 +45,7 @@ class IPCChannelLayer(object):
         # Write message into the correct message queue
         queue = self._message_queue(channel)
         try:
-            queue.send(self.serialize(message), timeout=0)
+            queue.send(self.serialize([message, time.time() + self.expiry]), timeout=0)
         except posix_ipc.BusyError:
             raise self.ChannelFull
 
@@ -57,11 +58,15 @@ class IPCChannelLayer(object):
         # Try to pop off all of the named channels
         for channel in channels:
             queue = self._message_queue(channel)
-            try:
-                message = self.deserialize(queue.receive(0)[0])
-                return channel, message
-            except posix_ipc.BusyError:
-                continue
+            # Keep looping on the channel until we hit no messages or an unexpired one
+            while True:
+                try:
+                    message, expires = self.deserialize(queue.receive(0)[0])
+                    if expires <= time.time():
+                        continue
+                    return channel, message
+                except posix_ipc.BusyError:
+                    break
         return None, None
 
     def new_channel(self, pattern):
