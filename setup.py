@@ -23,6 +23,6 @@ setup(
         'six',
         'posix_ipc>=1.0.0',
         'msgpack-python',
-        'asgiref>=0.12',
+        'asgiref>=0.13',
     ]
 )
