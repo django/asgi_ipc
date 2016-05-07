@@ -118,14 +118,16 @@ class IPCChannelLayer(BaseChannelLayer):
         """
         group_dict = self._group_dict(group)
         with self.thread_lock:
-            for channel, expires in group_dict.items():
-                if expires <= time.time():
+            items = list(group_dict.items())
+        for channel, expires in items:
+            if expires <= time.time():
+                with self.thread_lock:
                     group_dict.discard(channel)
-                else:
-                    try:
-                        self.send(channel, message)
-                    except self.ChannelFull:
-                        pass
+            else:
+                try:
+                    self.send(channel, message)
+                except self.ChannelFull:
+                    pass
 
     ### Flush extension ###
 
