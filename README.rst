@@ -1,6 +1,12 @@
 asgi_ipc
 ========
 
+.. image:: https://api.travis-ci.org/andrewgodwin/asgi_ipc.svg
+    :target: https://travis-ci.org/andrewgodwin/asgi_ipc
+
+.. image:: https://img.shields.io/pypi/v/asgi_ipc.svg
+    :target: https://pypi.python.org/pypi/asgi_ipc
+
 An ASGI channel layer that uses POSIX shared memory IPC as its backing store
 (only works between processes on the same machine).
 
