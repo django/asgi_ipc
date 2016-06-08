@@ -50,7 +50,7 @@ class IPCChannelLayer(BaseChannelLayer):
     def send(self, channel, message):
         # Typecheck
         assert isinstance(message, dict), "message is not a dict"
-        assert isinstance(channel, six.text_type), "%s is not unicode" % channel
+        assert self.valid_channel_name(channel), "channel name not valid"
         # Write message into the correct message queue
         channel_list = self._channel_list(channel)
         with self.thread_lock:
@@ -63,7 +63,7 @@ class IPCChannelLayer(BaseChannelLayer):
         if not channels:
             return None, None
         channels = list(channels)
-        assert all(isinstance(channel, six.text_type) for channel in channels)
+        assert all(self.valid_channel_name(channel) for channel in channels), "one or more channel names invalid"
         random.shuffle(channels)
         # Try to pop off all of the named channels
         with self.thread_lock:
@@ -85,7 +85,7 @@ class IPCChannelLayer(BaseChannelLayer):
         # Keep making channel names till one isn't present.
         while True:
             random_string = "".join(random.choice(string.ascii_letters) for i in range(12))
-            assert pattern.endswith("!")
+            assert pattern.endswith("!") or pattern.endswith("?")
             new_name = pattern + random_string
             # To see if it's present we open the queue without O_CREAT
             if not MemoryList.exists(self._channel_path(new_name)):
@@ -99,6 +99,7 @@ class IPCChannelLayer(BaseChannelLayer):
         """
         Adds the channel to the named group
         """
+        assert self.valid_group_name(group), "Invalid group name"
         group_dict = self._group_dict(group)
         with self.thread_lock:
             group_dict[channel] = time.time() + self.group_expiry
@@ -108,6 +109,7 @@ class IPCChannelLayer(BaseChannelLayer):
         Removes the channel from the named group if it is in the group;
         does nothing otherwise (does not error)
         """
+        assert self.valid_group_name(group), "Invalid group name"
         group_dict = self._group_dict(group)
         with self.thread_lock:
             group_dict.discard(channel)
@@ -116,6 +118,7 @@ class IPCChannelLayer(BaseChannelLayer):
         """
         Sends a message to the entire group.
         """
+        assert self.valid_group_name(group), "Invalid group name"
         group_dict = self._group_dict(group)
         with self.thread_lock:
             items = list(group_dict.items())
