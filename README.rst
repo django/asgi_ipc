@@ -10,8 +10,8 @@ asgi_ipc
 An ASGI channel layer that uses POSIX shared memory IPC as its backing store
 (only works between processes on the same machine).
 
-Beta - please file issues if it doesn't work or fails weirdly (shared memory
-and IPC can be tricky)
+IPC is still a bit of a rough area of UNIX compatability, so if you find weird
+errors, please file an issue with details and exact system specifications.
 
 
 Usage
