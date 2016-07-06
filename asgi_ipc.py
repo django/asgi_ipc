@@ -14,6 +14,7 @@ from asgiref.base_layer import BaseChannelLayer
 
 
 __version__ = pkg_resources.require('asgi_ipc')[0].version
+MB = 1024 * 1024
 
 
 class IPCChannelLayer(BaseChannelLayer):
@@ -39,9 +40,9 @@ class IPCChannelLayer(BaseChannelLayer):
         )
         self.thread_lock = threading.Lock()
         self.prefix = prefix
-        self.channel_set = MemorySet("/%s-channelset" % self.prefix)
+        self.channel_store = MemoryDict("/%s-channel-dict" % self.prefix, size=100 * MB)
         # Set containing all groups to flush
-        self.group_set = MemorySet("/%s-groupset" % self.prefix)
+        self.group_store = MemoryDict("/%s-group-dict" % self.prefix, size=20 * MB)
 
     ### ASGI API ###
 
@@ -52,12 +53,13 @@ class IPCChannelLayer(BaseChannelLayer):
         assert isinstance(message, dict), "message is not a dict"
         assert self.valid_channel_name(channel), "channel name not valid"
         # Write message into the correct message queue
-        channel_list = self._channel_list(channel)
         with self.thread_lock:
+            channel_list = self.channel_store.get(channel, [])
             if len(channel_list) >= self.get_capacity(channel):
                 raise self.ChannelFull
             else:
                 channel_list.append([message, time.time() + self.expiry])
+                self.channel_store[channel] = channel_list
 
     def receive_many(self, channels, block=False):
         if not channels:
@@ -68,16 +70,22 @@ class IPCChannelLayer(BaseChannelLayer):
         # Try to pop off all of the named channels
         with self.thread_lock:
             for channel in channels:
-                channel_list = self._channel_list(channel)
+                channel_list = self.channel_store.get(channel, [])
                 # Keep looping on the channel until we hit no messages or an unexpired one
                 while True:
                     try:
-                        message, expires = channel_list.popleft()
+                        # Popleft equivalent
+                        message, expires = channel_list[0]
+                        channel_list = channel_list[1:]
+                        self.channel_store[channel] = channel_list
                         if expires <= time.time():
                             continue
                         return channel, message
                     except IndexError:
                         break
+                    # If the channel is now empty, delete its key
+                    if not channel_list and channel in self.channel_store:
+                        del self.channel_store[channel]
         return None, None
 
     def new_channel(self, pattern):
@@ -88,10 +96,11 @@ class IPCChannelLayer(BaseChannelLayer):
             assert pattern.endswith("!") or pattern.endswith("?")
             new_name = pattern + random_string
             # To see if it's present we open the queue without O_CREAT
-            if not MemoryList.exists(self._channel_path(new_name)):
-                return new_name
-            else:
-                continue
+            with self.thread_lock:
+                if new_name not in self.channel_store:
+                    return new_name
+                else:
+                    continue
 
     ### Groups extension ###
 
@@ -100,9 +109,10 @@ class IPCChannelLayer(BaseChannelLayer):
         Adds the channel to the named group
         """
         assert self.valid_group_name(group), "Invalid group name"
-        group_dict = self._group_dict(group)
         with self.thread_lock:
+            group_dict = self.group_store.get(group, {})
             group_dict[channel] = time.time() + self.group_expiry
+            self.group_store[group] = group_dict
 
     def group_discard(self, group, channel):
         """
@@ -110,22 +120,27 @@ class IPCChannelLayer(BaseChannelLayer):
         does nothing otherwise (does not error)
         """
         assert self.valid_group_name(group), "Invalid group name"
-        group_dict = self._group_dict(group)
         with self.thread_lock:
-            group_dict.discard(channel)
+            group_dict = self.group_store.get(group, {})
+            if channel in group_dict:
+                del group_dict[channel]
+                if not group_dict:
+                    del self.group_store[group]
+                else:
+                    self.group_store[group] = group_dict
 
     def send_group(self, group, message):
         """
         Sends a message to the entire group.
         """
         assert self.valid_group_name(group), "Invalid group name"
-        group_dict = self._group_dict(group)
         with self.thread_lock:
-            items = list(group_dict.items())
-        for channel, expires in items:
+            group_dict = self.group_store.get(group, {})
+        for channel, expires in list(group_dict.items()):
             if expires <= time.time():
+                del group_dict[channel]
                 with self.thread_lock:
-                    group_dict.discard(channel)
+                    self.group_store[group] = group_dict
             else:
                 try:
                     self.send(channel, message)
@@ -139,34 +154,8 @@ class IPCChannelLayer(BaseChannelLayer):
         Deletes all messages and groups.
         """
         with self.thread_lock:
-            for path in self.channel_set:
-                MemoryList(path).flush()
-            for path in self.group_set:
-                MemoryDict(path).flush()
-
-    ### Internal functions ###
-
-    def _channel_path(self, channel):
-        assert isinstance(channel, six.text_type)
-        return "/%s-channel-%s" % (self.prefix, channel.encode("ascii"))
-
-    def _group_path(self, group):
-        assert isinstance(group, six.text_type)
-        return "/%s-group-%s" % (self.prefix, group.encode("ascii"))
-
-    def _channel_list(self, channel):
-        """
-        Returns a MemoryList object for the channel
-        """
-        self.channel_set.add(self._channel_path(channel))
-        return MemoryList(self._channel_path(channel), size=1024*1024*self.capacity)
-
-    def _group_dict(self, group):
-        """
-        Returns a MemoryDict object for the named group
-        """
-        self.group_set.add(self._group_path(group))
-        return MemoryDict(self._group_path(group), size=1024*1024*10)
+            self.channel_store.flush()
+            self.group_store.flush()
 
     def __str__(self):
         return "%s(hosts=%s)" % (self.__class__.__name__, self.hosts)
@@ -309,6 +298,11 @@ class MemoryDatastructure(object):
         d[key] = value
         self._set_value(d)
 
+    def __delitem__(self, key):
+        d = self._get_value()
+        del d[key]
+        self._set_value(d)
+
     def __len__(self):
         return len(self._get_value())
 
@@ -329,39 +323,11 @@ class MemoryDict(MemoryDatastructure):
     def values(self):
         return self._get_value().values()
 
+    def get(self, key, default):
+        return self._get_value().get(key, default)
+
     def discard(self, item):
         value = self._get_value()
         if item in value:
             del value[item]
         self._set_value(value)
-
-
-class MemorySet(MemoryDict):
-    """
-    Like MemoryDict but just presents a set interface (using dict keys)
-    """
-
-    def add(self, item):
-        value = self._get_value()
-        value[item] = None
-        self._set_value(value)
-
-
-class MemoryList(MemoryDatastructure):
-    """
-    Memory-backed list. Used for channels.
-    """
-
-    signature = b"ASGL0001"
-
-    datatype = list
-
-    def append(self, item):
-        value = self._get_value()
-        value.append(item)
-        self._set_value(value)
-
-    def popleft(self):
-        value = self._get_value()
-        self._set_value(value[1:])
-        return value[0]
