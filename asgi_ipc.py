@@ -31,7 +31,7 @@ class IPCChannelLayer(BaseChannelLayer):
     little... heavier than that.
     """
 
-    def __init__(self, prefix="asgi", expiry=60, group_expiry=86400, capacity=10, channel_capacity=None):
+    def __init__(self, prefix="asgi", expiry=60, group_expiry=86400, capacity=10, channel_capacity=None, channel_memory=100*MB, group_memory=20*MB):
         super(IPCChannelLayer, self).__init__(
             expiry=expiry,
             group_expiry=group_expiry,
@@ -40,9 +40,9 @@ class IPCChannelLayer(BaseChannelLayer):
         )
         self.thread_lock = threading.Lock()
         self.prefix = prefix
-        self.channel_store = MemoryDict("/%s-channel-dict" % self.prefix, size=100 * MB)
+        self.channel_store = MemoryDict("/%s-channel-dict" % self.prefix, size=channel_memory)
         # Set containing all groups to flush
-        self.group_store = MemoryDict("/%s-group-dict" % self.prefix, size=20 * MB)
+        self.group_store = MemoryDict("/%s-group-dict" % self.prefix, size=group_memory)
 
     ### ASGI API ###
 
@@ -193,12 +193,18 @@ class MemoryDatastructure(object):
             mode=0o660,
             initial_value=1,
         )
-        self.shm = posix_ipc.SharedMemory(
-            self.path,
-            flags=posix_ipc.O_CREAT,
-            mode=0o660,
-            size=self.size,
-        )
+        try:
+            self.shm = posix_ipc.SharedMemory(
+                self.path,
+                flags=posix_ipc.O_CREAT,
+                mode=0o660,
+                size=self.size,
+            )
+        except ValueError as e:
+            raise ValueError(
+                "Unable to allocate shared memory segment (potentially out of memory).\n" +
+                "Error was: %s" % e
+            )
         self.mmap = mmap.mmap(self.shm.fd, self.size)
 
     @classmethod
