@@ -129,11 +129,10 @@ class IPCChannelLayer(BaseChannelLayer):
                 else:
                     self.group_store[group] = group_dict
 
-    def send_group(self, group, message):
+    def group_channels(self, group):
         """
-        Sends a message to the entire group.
+        Returns all group channel names.
         """
-        assert self.valid_group_name(group), "Invalid group name"
         with self.thread_lock:
             group_dict = self.group_store.get(group, {})
         for channel, expires in list(group_dict.items()):
@@ -142,10 +141,18 @@ class IPCChannelLayer(BaseChannelLayer):
                 with self.thread_lock:
                     self.group_store[group] = group_dict
             else:
-                try:
-                    self.send(channel, message)
-                except self.ChannelFull:
-                    pass
+                yield channel
+
+    def send_group(self, group, message):
+        """
+        Sends a message to the entire group.
+        """
+        assert self.valid_group_name(group), "Invalid group name"
+        for channel in self.group_channels(group):
+            try:
+                self.send(channel, message)
+            except self.ChannelFull:
+                pass
 
     ### Flush extension ###
 
