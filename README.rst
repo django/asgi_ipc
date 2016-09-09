@@ -98,3 +98,16 @@ to 10, and all ``websocket.send!`` channels to 20::
 
 If you want to enforce a matching order, use an ``OrderedDict`` as the
 argument; channels will then be matched in the order the dict provides them.
+
+
+Maintenance and Security
+------------------------
+
+To report security issues, please contact security@djangoproject.com. For GPG
+signatures and more security process information, see
+https://docs.djangoproject.com/en/dev/internals/security/.
+
+To report bugs or request new features, please open a new GitHub issue.
+
+This repository is part of the Channels project. For the shepherd and maintenance team, please see the
+`main Channels readme <https://github.com/andrewgodwin/channels/blob/master/README.rst>`_.
