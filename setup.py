@@ -10,9 +10,9 @@ readme_path = os.path.join(os.path.dirname(__file__), "README.rst")
 setup(
     name='asgi_ipc',
     version=__version__,
-    url='http://github.com/andrewgodwin/asgi_ipc/',
-    author='Andrew Godwin',
-    author_email='andrew@aeracode.org',
+    url='http://github.com/django/asgi_ipc/',
+    author='Django Software Foundation',
+    author_email='foundation@djangoproject.com',
     description='Posix IPC-backed ASGI channel layer implementation',
     long_description=open(readme_path).read(),
     license='BSD',
