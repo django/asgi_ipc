@@ -40,9 +40,9 @@ class IPCChannelLayer(BaseChannelLayer):
         )
         self.thread_lock = threading.Lock()
         self.prefix = prefix
-        self.channel_store = MemoryDict("/%s-channel-dict" % self.prefix, size=channel_memory)
+        self.channel_store = MemoryDict("/%s-chan" % self.prefix, size=channel_memory)
         # Set containing all groups to flush
-        self.group_store = MemoryDict("/%s-group-dict" % self.prefix, size=group_memory)
+        self.group_store = MemoryDict("/%s-group" % self.prefix, size=group_memory)
 
     ### ASGI API ###
 
@@ -195,7 +195,7 @@ class MemoryDatastructure(object):
         # TODO: Investigate having separate read and write locks to allow
         # concurrent reads.
         self.semaphore = posix_ipc.Semaphore(
-            self.path + "-semaphore",
+            self.path + "-sem",
             flags=posix_ipc.O_CREAT,
             mode=0o660,
             initial_value=1,
@@ -278,7 +278,7 @@ class MemoryDatastructure(object):
         # Unlink and remake the semaphore
         self.semaphore.unlink()
         self.semaphore = posix_ipc.Semaphore(
-            self.path + "-semaphore",
+            self.path + "-sem",
             flags=posix_ipc.O_CREX,
             mode=0o660,
             initial_value=1,
