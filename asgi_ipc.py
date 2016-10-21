@@ -293,6 +293,7 @@ class MemoryDatastructure(object):
         """
         self.mmap.close()
         self.shm.close_fd()
+        self.shm.unlink()
 
     def flush(self):
         self._set_value(self.datatype())
