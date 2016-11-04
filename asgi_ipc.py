@@ -61,7 +61,7 @@ class IPCChannelLayer(BaseChannelLayer):
                 channel_list.append([message, time.time() + self.expiry])
                 self.channel_store[channel] = channel_list
 
-    def receive_many(self, channels, block=False):
+    def receive(self, channels, block=False):
         if not channels:
             return None, None
         channels = list(channels)
