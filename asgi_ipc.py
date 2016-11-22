@@ -83,9 +83,9 @@ class IPCChannelLayer(BaseChannelLayer):
                         return channel, message
                     except IndexError:
                         break
-                    # If the channel is now empty, delete its key
-                    if not channel_list and channel in self.channel_store:
-                        del self.channel_store[channel]
+                # If the channel is now empty, delete its key
+                if not channel_list and channel in self.channel_store:
+                    del self.channel_store[channel]
         return None, None
 
     def new_channel(self, pattern):
