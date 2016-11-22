@@ -165,6 +165,7 @@ class IPCChannelLayer(BaseChannelLayer):
             self.group_store.flush()
 
     def __str__(self):
+        # TODO: Resolve unresolved attribute reference `self.hosts`
         return "%s(hosts=%s)" % (self.__class__.__name__, self.hosts)
 
 
