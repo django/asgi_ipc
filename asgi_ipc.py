@@ -1,7 +1,6 @@
 from __future__ import unicode_literals
 import mmap
 import msgpack
-import os
 import pkg_resources
 import posix_ipc
 import random
