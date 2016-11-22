@@ -24,6 +24,7 @@ each other as long as they're on the same machine.
 Example:
 
 .. code-block:: python
+
     import asgi_ipc as asgi
     
     channel_layer = asgi.IPCChannelLayer(
