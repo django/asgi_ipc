@@ -24,11 +24,15 @@ each other as long as they're on the same machine.
 Example:
 
 .. code-block:: python
-
-    channel_layer = IPCChannelLayer(
+    import asgi_ipc as asgi
+    
+    channel_layer = asgi.IPCChannelLayer(
         prefix="aeracode",
         channel_memory=200 * 1024 * 1024,
     )
+    
+    channel_layer.send("my_channel", {"text": "Hello ASGI"})
+    print(channel_layer.receive(["my_channel", ]))
 
 ``prefix``
 ~~~~~~~~~~
