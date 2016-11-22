@@ -1,8 +1,7 @@
 from __future__ import unicode_literals
+
 import mmap
 import msgpack
-import pkg_resources
-import posix_ipc
 import random
 import six
 import string
@@ -11,6 +10,8 @@ import threading
 import time
 from asgiref.base_layer import BaseChannelLayer
 
+import pkg_resources
+import posix_ipc
 
 __version__ = pkg_resources.require('asgi_ipc')[0].version
 MB = 1024 * 1024
@@ -30,7 +31,9 @@ class IPCChannelLayer(BaseChannelLayer):
     little... heavier than that.
     """
 
-    def __init__(self, prefix="asgi", expiry=60, group_expiry=86400, capacity=10, channel_capacity=None, channel_memory=100*MB, group_memory=20*MB):
+    def __init__(self, prefix="asgi", expiry=60, group_expiry=86400,
+                 capacity=10, channel_capacity=None,
+                 channel_memory=100 * MB, group_memory=20 * MB):
         super(IPCChannelLayer, self).__init__(
             expiry=expiry,
             group_expiry=group_expiry,
@@ -39,16 +42,20 @@ class IPCChannelLayer(BaseChannelLayer):
         )
         self.thread_lock = threading.Lock()
         self.prefix = prefix
-        self.channel_store = MemoryDict("/%s-chan" % self.prefix, size=channel_memory)
+        self.channel_store = MemoryDict("/%s-chan" % self.prefix,
+                                        size=channel_memory)
         # Set containing all groups to flush
-        self.group_store = MemoryDict("/%s-group" % self.prefix, size=group_memory)
+        self.group_store = MemoryDict("/%s-group" % self.prefix,
+                                      size=group_memory)
 
-    ### ASGI API ###
+    # --------
+    # ASGI API
+    # --------
 
     extensions = ["flush", "groups"]
 
     def send(self, channel, message):
-        # Typecheck
+        # Type check
         assert isinstance(message, dict), "message is not a dict"
         assert self.valid_channel_name(channel), "channel name not valid"
         # Write message into the correct message queue
@@ -64,13 +71,15 @@ class IPCChannelLayer(BaseChannelLayer):
         if not channels:
             return None, None
         channels = list(channels)
-        assert all(self.valid_channel_name(channel) for channel in channels), "one or more channel names invalid"
+        assert all(self.valid_channel_name(channel) for channel in
+                   channels), "one or more channel names invalid"
         random.shuffle(channels)
         # Try to pop off all of the named channels
         with self.thread_lock:
             for channel in channels:
                 channel_list = self.channel_store.get(channel, [])
-                # Keep looping on the channel until we hit no messages or an unexpired one
+                # Keep looping on the channel until
+                # we hit no messages or an unexpired one
                 while True:
                     try:
                         # Popleft equivalent
@@ -101,7 +110,9 @@ class IPCChannelLayer(BaseChannelLayer):
                 else:
                     continue
 
-    ### Groups extension ###
+    # ----------------
+    # Groups extension
+    # ----------------
 
     def group_add(self, group, channel):
         """
@@ -153,7 +164,9 @@ class IPCChannelLayer(BaseChannelLayer):
             except self.ChannelFull:
                 pass
 
-    ### Flush extension ###
+    # ---------------
+    # Flush extension
+    # ---------------
 
     def flush(self):
         """
@@ -209,7 +222,8 @@ class MemoryDatastructure(object):
             )
         except ValueError as e:
             raise ValueError(
-                "Unable to allocate shared memory segment (potentially out of memory).\n" +
+                "Unable to allocate shared memory segment"
+                "(potentially out of memory).\n"
                 "Error was: %s" % e
             )
         self.mmap = mmap.mmap(self.shm.fd, self.size)
