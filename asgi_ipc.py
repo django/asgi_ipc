@@ -92,7 +92,7 @@ class IPCChannelLayer(BaseChannelLayer):
         assert isinstance(pattern, six.text_type)
         # Keep making channel names till one isn't present.
         while True:
-            random_string = "".join(random.choice(string.ascii_letters) for i in range(12))
+            random_string = "".join(random.sample(string.ascii_letters, 12))
             assert pattern.endswith("!") or pattern.endswith("?")
             new_name = pattern + random_string
             # To see if it's present we open the queue without O_CREAT
