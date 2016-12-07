@@ -42,11 +42,15 @@ class IPCChannelLayer(BaseChannelLayer):
         )
         self.thread_lock = threading.Lock()
         self.prefix = prefix
-        self.channel_store = MemoryDict("/%s-chan" % self.prefix,
-                                        size=channel_memory)
+        self.channel_store = MemoryDict(
+            "/%s-chan" % self.prefix,
+            size=channel_memory
+        )
         # Set containing all groups to flush
-        self.group_store = MemoryDict("/%s-group" % self.prefix,
-                                      size=group_memory)
+        self.group_store = MemoryDict(
+            "/%s-group" % self.prefix,
+            size=group_memory
+        )
 
     # --------
     # ASGI API
@@ -71,8 +75,9 @@ class IPCChannelLayer(BaseChannelLayer):
         if not channels:
             return None, None
         channels = list(channels)
-        assert all(self.valid_channel_name(channel) for channel in
-                   channels), "one or more channel names invalid"
+        assert all(
+            self.valid_channel_name(channel) for channel in channels
+        ), "one or more channel names invalid"
         random.shuffle(channels)
         # Try to pop off all of the named channels
         with self.thread_lock:
