@@ -26,12 +26,12 @@ Example:
 .. code-block:: python
 
     import asgi_ipc as asgi
-    
+
     channel_layer = asgi.IPCChannelLayer(
         prefix="aeracode",
         channel_memory=200 * 1024 * 1024,
     )
-    
+
     channel_layer.send("my_channel", {"text": "Hello ASGI"})
     print(channel_layer.receive(["my_channel", ]))
 
@@ -108,6 +108,17 @@ to 10, and all ``websocket.send!`` channels to 20:
 If you want to enforce a matching order, use an ``OrderedDict`` as the
 argument; channels will then be matched in the order the dict provides them.
 
+Dependencies
+------------
+
+All Channels projects currently support Python 2.7, 3.4 and 3.5.
+
+Contributing
+------------
+
+Please refer to the
+`main Channels contributing docs <https://github.com/django/channels/blob/master/CONTRIBUTING.rst>`_.
+That also contains advice on how to set up the development environment and run the tests.
 
 Maintenance and Security
 ------------------------

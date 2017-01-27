@@ -2,10 +2,9 @@ sudo: false
 language: python
 python:
   - "2.7"
+  - "3.4"
   - "3.5"
 install:
-  - if [[ $TRAVIS_PYTHON_VERSION == 2.7 ]]; then pip install unittest2; fi
-  - pip install six msgpack-python posix_ipc asgiref
+  - pip install -e .
 script:
-  - python setup.py develop
-  - if [[ $TRAVIS_PYTHON_VERSION == 2.7 ]]; then python -m unittest2; else python -m unittest; fi
+  - python -m unittest discover
