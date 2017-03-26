@@ -264,7 +264,7 @@ class MemoryDatastructure(object):
                 return self.datatype()
             else:
                 # There should then be four bytes of length
-                size = struct.unpack("!I", self.mmap.read(4))[0]
+                size = struct.unpack(b'!I', self.mmap.read(4))[0]
                 return msgpack.unpackb(self.mmap.read(size), encoding="utf8")
         finally:
             self.semaphore.release()
@@ -280,7 +280,7 @@ class MemoryDatastructure(object):
             self.mmap.seek(0)
             self.mmap.write(self.signature)
             towrite = msgpack.packb(value, use_bin_type=True)
-            self.mmap.write(struct.pack("!I", len(towrite)))
+            self.mmap.write(struct.pack(b'!I', len(towrite)))
             self.mmap.write(towrite)
         finally:
             self.semaphore.release()
