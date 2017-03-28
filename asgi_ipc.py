@@ -62,6 +62,12 @@ class IPCChannelLayer(BaseChannelLayer):
         # Type check
         assert isinstance(message, dict), "message is not a dict"
         assert self.valid_channel_name(channel), "channel name not valid"
+        # Make sure the message does not contain reserved keys
+        assert "__asgi_channel__" not in message
+        # If it's a process-local channel, strip off local part and stick full name in message
+        if "!" in channel:
+            message['__asgi_channel__'] = channel
+            channel = self.non_local_name(channel)
         # Write message into the correct message queue
         with self.thread_lock:
             channel_list = self.channel_store.get(channel, [])
@@ -71,12 +77,12 @@ class IPCChannelLayer(BaseChannelLayer):
                 channel_list.append([message, time.time() + self.expiry])
                 self.channel_store[channel] = channel_list
 
-    def receive(self, channels):
+    def receive(self, channels, block=False):
         if not channels:
             return None, None
         channels = list(channels)
         assert all(
-            self.valid_channel_name(channel) for channel in channels
+            self.valid_channel_name(channel, receive=True) for channel in channels
         ), "one or more channel names invalid"
         random.shuffle(channels)
         # Try to pop off all of the named channels
@@ -93,6 +99,10 @@ class IPCChannelLayer(BaseChannelLayer):
                         self.channel_store[channel] = channel_list
                         if expires <= time.time():
                             continue
+                        # If there is a full channel name stored in the message, unpack it.
+                        if "__asgi_channel__" in message:
+                            channel = message['__asgi_channel__']
+                            del message['__asgi_channel__']
                         return channel, message
                     except IndexError:
                         break
@@ -106,7 +116,7 @@ class IPCChannelLayer(BaseChannelLayer):
         # Keep making channel names till one isn't present.
         while True:
             random_string = "".join(random.sample(string.ascii_letters, 12))
-            assert pattern.endswith("!") or pattern.endswith("?")
+            assert pattern.endswith("?")
             new_name = pattern + random_string
             # To see if it's present we open the queue without O_CREAT
             with self.thread_lock:
