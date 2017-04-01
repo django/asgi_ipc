@@ -1,0 +1,4 @@
+1.3.0 (2017-04-01)
+------------------
+
+* Updated to new process-specific channel style
