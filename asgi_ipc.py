@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 
+import contextlib
 import msgpack
 import os
 import random
@@ -92,18 +93,17 @@ class IPCChannelLayer(BaseChannelLayer):
             # Keep looping on the channel until
             # we hit no messages or an unexpired one
             while True:
-                try:
-                    message, expires = self.message_store.pop_message(channel)
-                    message = msgpack.unpackb(message, encoding="utf8")
-                    if expires <= time.time():
-                        continue
-                    # If there is a full channel name stored in the message, unpack it.
-                    if "__asgi_channel__" in message:
-                        channel = message['__asgi_channel__']
-                        del message['__asgi_channel__']
-                    return channel, message
-                except ValueError:
+                message, expires = self.message_store.pop_message(channel)
+                if message is None:
                     break
+                message = msgpack.unpackb(message, encoding="utf8")
+                if expires <= time.time():
+                    continue
+                # If there is a full channel name stored in the message, unpack it.
+                if "__asgi_channel__" in message:
+                    channel = message['__asgi_channel__']
+                    del message['__asgi_channel__']
+                return channel, message
         return None, None
 
     def new_channel(self, pattern):
@@ -191,7 +191,10 @@ class SqliteTable(object):
         Caching, threadlocal connection accessor.
         """
         if not hasattr(self._locals, "connection"):
-            self._locals.connection = sqlite3.connect(self.db_path)
+            self._locals.connection = sqlite3.connect(
+                self.db_path,
+                isolation_level="IMMEDIATE",
+            )
             self._locals.connection.text_factory = str
         return self._locals.connection
 
@@ -221,23 +224,26 @@ class SqliteTable(object):
         delattr(self._locals, "semaphore")
 
     def flush(self):
-        self.connection.cursor().execute('DELETE FROM {table_name}'.format(table_name=self.table_name))
-        self.connection.commit()
+        with self.semaphore_manager():
+            self._execute('DELETE FROM {table_name}'.format(table_name=self.table_name))
 
     def _execute(self, query, *args):
+        cursor = self.connection.cursor()
+        cursor.execute(query.format(table=self.table_name), args)
+        self.connection.commit()
+        return cursor.fetchall()
+
+    @contextlib.contextmanager
+    def semaphore_manager(self):
         try:
             self.semaphore.acquire(self.death_timeout)
         except posix_ipc.BusyError:
             self._reset()
             self.semaphore.acquire(0)
         try:
-            cursor = self.connection.cursor()
-            cursor.execute(query.format(table=self.table_name), args)
-            result = cursor.fetchall()
-            self.connection.commit()
+            yield
         finally:
             self.semaphore.release()
-        return result
 
 
 class MessageTable(SqliteTable):
@@ -248,25 +254,43 @@ class MessageTable(SqliteTable):
     '''
 
     def get_messages(self, channel):
-        return self._execute('SELECT message, expiry FROM {table} WHERE channel=?', channel) or (None, None)
+        with self.semaphore_manager():
+            return (
+                self._execute('SELECT message, expiry FROM {table} WHERE channel=?', channel) or
+                (None, None)
+            )
 
     def get_message_count(self, channel):
-        return self._execute('SELECT COUNT(*) FROM {table} WHERE channel=?', channel)[0][0]
+        with self.semaphore_manager():
+            return self._execute('SELECT COUNT(*) FROM {table} WHERE channel=?', channel)[0][0]
 
     def add_message(self, message, expiry, channel):
-        self._execute('INSERT INTO {table} (channel, message, expiry) VALUES (?,?,?)', channel, message, expiry)
+        with self.semaphore_manager():
+            self._execute('INSERT INTO {table} (channel, message, expiry) VALUES (?,?,?)', channel, message, expiry)
 
     def pop_message(self, channel):
-        result = self._execute('SELECT id, message, expiry FROM {table} WHERE channel=? LIMIT 1', channel)
-        if not result:
-            raise ValueError('No message in channel')
-        result = result[0]
-        self._execute('DELETE FROM {table} WHERE id=?', result[0])
-        return result[1], result[2]
+        """
+        Atomically reads and removes a message from the messages table.
+        """
+        with self.semaphore_manager():
+            cursor = self.connection.cursor()
+            cursor.execute("BEGIN")
+            cursor.execute(
+                'SELECT id, message, expiry FROM {table} WHERE channel=? LIMIT 1'.format(table=self.table_name),
+                (channel, )
+            )
+            result = cursor.fetchall()
+            self.connection.commit()
+            if not result:
+                return None, None
+            row = result[0]
+            cursor.execute('DELETE FROM {table} WHERE id=?'.format(table=self.table_name), (row[0], ))
+            self.connection.commit()
+            return row[1], row[2]
 
     def __contains__(self, value):
-        result = self._execute('SELECT COUNT(*) FROM {table} WHERE channel=?', value)[0][0]
-        return bool(result)
+        with self.semaphore_manager():
+            return bool(self._execute('SELECT COUNT(*) FROM {table} WHERE channel=?', value)[0][0])
 
 
 class GroupTable(SqliteTable):
@@ -277,14 +301,18 @@ class GroupTable(SqliteTable):
     '''
 
     def add_channel(self, group, channel, expiry):
-        self._execute('INSERT INTO {table} (channel, group_name, expiry) VALUES (?,?,?)', channel, group, expiry)
+        with self.semaphore_manager():
+            self._execute('INSERT INTO {table} (channel, group_name, expiry) VALUES (?,?,?)', channel, group, expiry)
 
     def discard_channel(self, group, channel):
-        self._execute('DELETE FROM {table} WHERE group_name=? AND channel=?', group, channel)
+        with self.semaphore_manager():
+            self._execute('DELETE FROM {table} WHERE group_name=? AND channel=?', group, channel)
 
     def _cleanup(self, group):
-        self._execute('DELETE FROM {table} WHERE group_name=? AND expiry<=?', group, time.time())
+        with self.semaphore_manager():
+            self._execute('DELETE FROM {table} WHERE group_name=? AND expiry<=?', group, time.time())
 
     def get_current_channels(self, group):
-        self._cleanup(group)
-        return self._execute('SELECT DISTINCT channel FROM {table} WHERE group_name=?', group)
+        with self.semaphore_manager():
+            self._cleanup(group)
+            return self._execute('SELECT DISTINCT channel FROM {table} WHERE group_name=?', group)
