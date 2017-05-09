@@ -68,11 +68,12 @@ class IPCChannelLayer(BaseChannelLayer):
             message = dict(message.items())
             message['__asgi_channel__'] = channel
             channel = self.non_local_name(channel)
-        # Write message into the correct message queue
+        # Clean the channel of expired messages
+        self.message_store.delete_expired(time.time())
+        # Write message into the correct message queue with a size check
         channel_size = self.message_store.get_message_count(channel)
-
         if channel_size >= self.get_capacity(channel):
-            raise self.ChannelFull
+            raise self.ChannelFull()
         else:
             towrite = msgpack.packb(message, use_bin_type=True)
             self.message_store.add_message(
@@ -90,20 +91,20 @@ class IPCChannelLayer(BaseChannelLayer):
         random.shuffle(channels)
         # Try to pop off all of the named channels
         for channel in channels:
-            # Keep looping on the channel until
-            # we hit no messages or an unexpired one
-            while True:
-                message, expires = self.message_store.pop_message(channel)
-                if message is None:
-                    break
-                message = msgpack.unpackb(message, encoding="utf8")
-                if expires <= time.time():
-                    continue
-                # If there is a full channel name stored in the message, unpack it.
-                if "__asgi_channel__" in message:
-                    channel = message['__asgi_channel__']
-                    del message['__asgi_channel__']
-                return channel, message
+            # Clean the channel of expired messages
+            self.message_store.delete_expired(time.time())
+            # See if there is an unexpired message
+            message, expires = self.message_store.pop_message(channel)
+            if message is None:
+                break
+            message = msgpack.unpackb(message, encoding="utf8")
+            if expires <= time.time():
+                continue
+            # If there is a full channel name stored in the message, unpack it.
+            if "__asgi_channel__" in message:
+                channel = message['__asgi_channel__']
+                del message['__asgi_channel__']
+            return channel, message
         return None, None
 
     def new_channel(self, pattern):
@@ -287,6 +288,12 @@ class MessageTable(SqliteTable):
             cursor.execute('DELETE FROM {table} WHERE id=?'.format(table=self.table_name), (row[0], ))
             self.connection.commit()
             return row[1], row[2]
+
+    def delete_expired(self, cutoff):
+        """
+        Deletes all messages whose expiry is older than the cutoff.
+        """
+        self._execute('DELETE FROM {table} WHERE expiry<?'.format(table=self.table_name), cutoff)
 
     def __contains__(self, value):
         with self.semaphore_manager():
