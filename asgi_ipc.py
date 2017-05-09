@@ -34,23 +34,21 @@ class IPCChannelLayer(BaseChannelLayer):
     """
 
     def __init__(self, prefix="asgi", expiry=60, group_expiry=86400,
-                 capacity=10, channel_capacity=None,
-                 channel_memory=100 * MB, group_memory=20 * MB):
+                 capacity=10, channel_capacity=None):
         super(IPCChannelLayer, self).__init__(
             expiry=expiry,
             group_expiry=group_expiry,
             capacity=capacity,
             channel_capacity=channel_capacity,
         )
-        self.thread_lock = threading.Lock()
         self.prefix = prefix
+        # Work out where to store the data
         temp_dir = tempfile.gettempdir()
-        file_name = prefix + '.sqlite'
-        connection = sqlite3.connect(os.path.join(temp_dir, file_name))
-        connection.text_factory = str
-        self.message_store = MessageTable(connection, prefix)
-        # Set containing all groups to flush
-        self.group_store = GroupTable(connection, prefix)
+        sqlite_path = os.path.join(temp_dir, prefix + '.sqlite')
+        # Table with queued messages
+        self.message_store = MessageTable(sqlite_path, prefix)
+        # Table containing all groups to flush
+        self.group_store = GroupTable(sqlite_path, prefix)
 
     # --------
     # ASGI API
@@ -70,17 +68,16 @@ class IPCChannelLayer(BaseChannelLayer):
             message['__asgi_channel__'] = channel
             channel = self.non_local_name(channel)
         # Write message into the correct message queue
-        with self.thread_lock:
-            channel_size = self.message_store.get_message_count(channel)
+        channel_size = self.message_store.get_message_count(channel)
 
-            if channel_size >= self.get_capacity(channel):
-                raise self.ChannelFull
-            else:
-                towrite = msgpack.packb(message, use_bin_type=True)
-                self.message_store.add_message(
-                    message=towrite, channel=channel,
-                    expiry=time.time() + self.expiry
-                )
+        if channel_size >= self.get_capacity(channel):
+            raise self.ChannelFull
+        else:
+            towrite = msgpack.packb(message, use_bin_type=True)
+            self.message_store.add_message(
+                message=towrite, channel=channel,
+                expiry=time.time() + self.expiry
+            )
 
     def receive(self, channels, block=False):
         if not channels:
@@ -91,23 +88,22 @@ class IPCChannelLayer(BaseChannelLayer):
         ), "one or more channel names invalid"
         random.shuffle(channels)
         # Try to pop off all of the named channels
-        with self.thread_lock:
-            for channel in channels:
-                # Keep looping on the channel until
-                # we hit no messages or an unexpired one
-                while True:
-                    try:
-                        message, expires = self.message_store.pop_message(channel)
-                        message = msgpack.unpackb(message, encoding="utf8")
-                        if expires <= time.time():
-                            continue
-                        # If there is a full channel name stored in the message, unpack it.
-                        if "__asgi_channel__" in message:
-                            channel = message['__asgi_channel__']
-                            del message['__asgi_channel__']
-                        return channel, message
-                    except ValueError:
-                        break
+        for channel in channels:
+            # Keep looping on the channel until
+            # we hit no messages or an unexpired one
+            while True:
+                try:
+                    message, expires = self.message_store.pop_message(channel)
+                    message = msgpack.unpackb(message, encoding="utf8")
+                    if expires <= time.time():
+                        continue
+                    # If there is a full channel name stored in the message, unpack it.
+                    if "__asgi_channel__" in message:
+                        channel = message['__asgi_channel__']
+                        del message['__asgi_channel__']
+                    return channel, message
+                except ValueError:
+                    break
         return None, None
 
     def new_channel(self, pattern):
@@ -117,12 +113,10 @@ class IPCChannelLayer(BaseChannelLayer):
             random_string = "".join(random.sample(string.ascii_letters, 12))
             assert pattern.endswith("?")
             new_name = pattern + random_string
-            # To see if it's present we open the queue without O_CREAT
-            with self.thread_lock:
-                if new_name not in self.message_store:
-                    return new_name
-                else:
-                    continue
+            if new_name not in self.message_store:
+                return new_name
+            else:
+                continue
 
     # ----------------
     # Groups extension
@@ -133,8 +127,7 @@ class IPCChannelLayer(BaseChannelLayer):
         Adds the channel to the named group
         """
         assert self.valid_group_name(group), "Invalid group name"
-        with self.thread_lock:
-            self.group_store.add_channel(group=group, channel=channel, expiry=time.time() + self.group_expiry)
+        self.group_store.add_channel(group=group, channel=channel, expiry=time.time() + self.group_expiry)
 
     def group_discard(self, group, channel):
         """
@@ -142,8 +135,7 @@ class IPCChannelLayer(BaseChannelLayer):
         does nothing otherwise (does not error)
         """
         assert self.valid_group_name(group), "Invalid group name"
-        with self.thread_lock:
-            self.group_store.discard_channel(group, channel)
+        self.group_store.discard_channel(group, channel)
 
     def send_group(self, group, message):
         """
@@ -170,9 +162,8 @@ class IPCChannelLayer(BaseChannelLayer):
         """
         Deletes all messages and groups.
         """
-        with self.thread_lock:
-            self.message_store.flush()
-            self.group_store.flush()
+        self.message_store.flush()
+        self.group_store.flush()
 
     def __str__(self):
         return "%s(prefix=%s)" % (self.__class__.__name__, self.prefix)
@@ -186,19 +177,39 @@ class SqliteTable(object):
     # How long to wait for the semaphore before declaring deadlock and flushing
     death_timeout = 2
 
-    def __init__(self, connection, identifier):
-        self.connection = connection
+    # Threadlocal connection storage
+    _locals = threading.local()
+
+    def __init__(self, db_path, identifier):
+        self.db_path = db_path
         self.identifier = '/' + identifier + self.table_name + '-sem'
+        self._execute(self.table_structure)
+
+    @property
+    def connection(self):
+        """
+        Caching, threadlocal connection accessor.
+        """
+        if not hasattr(self._locals, "connection"):
+            self._locals.connection = sqlite3.connect(self.db_path)
+            self._locals.connection.text_factory = str
+        return self._locals.connection
+
+    @property
+    def semaphore(self):
+        """
+        Caching, threadlocal sempahore accessor.
+        """
         # TODO: Investigate having separate read and write locks to allow
         # concurrent reads.
-        self.semaphore = posix_ipc.Semaphore(
-            self.identifier,
-            flags=posix_ipc.O_CREAT,
-            mode=0o660,
-            initial_value=1,
-        )
-        connection.cursor().execute(self.table_structure)
-        connection.commit()
+        if not hasattr(self._locals, "semaphore"):
+            self._locals.semaphore = posix_ipc.Semaphore(
+                self.identifier,
+                flags=posix_ipc.O_CREAT,
+                mode=0o660,
+                initial_value=1,
+            )
+        return self._locals.semaphore
 
     def _reset(self):
         """
@@ -207,12 +218,7 @@ class SqliteTable(object):
         """
         # Unlink and remake the semaphore
         self.semaphore.unlink()
-        self.semaphore = posix_ipc.Semaphore(
-            self.identifier,
-            flags=posix_ipc.O_CREX,
-            mode=0o660,
-            initial_value=1,
-        )
+        delattr(self._locals, "semaphore")
 
     def flush(self):
         self.connection.cursor().execute('DELETE FROM {table_name}'.format(table_name=self.table_name))
@@ -228,6 +234,7 @@ class SqliteTable(object):
             cursor = self.connection.cursor()
             cursor.execute(query.format(table=self.table_name), args)
             result = cursor.fetchall()
+            self.connection.commit()
         finally:
             self.semaphore.release()
         return result
