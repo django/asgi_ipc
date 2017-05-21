@@ -197,6 +197,7 @@ class SqliteTable(object):
                 isolation_level="IMMEDIATE",
             )
             self._locals.connection.text_factory = str
+            self._locals.connection.cursor().execute("PRAGMA journal_mode = TRUNCATE")
         return self._locals.connection
 
     @property
