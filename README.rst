@@ -10,8 +10,11 @@ asgi_ipc
 An ASGI channel layer that uses POSIX shared memory IPC as its backing store
 (only works between processes on the same machine).
 
-IPC is still a bit of a rough area of UNIX compatability, so if you find weird
-errors, please file an issue with details and exact system specifications.
+IPC is still a bit of a wild west of UNIX compatability, so if you find weird
+errors, please file an issue with details and exact system specifications. In
+partcular, this module is tested and works well on Linux kernels and the Windows
+Subsystem for Linux; it also works on Mac OS but will not be able to detect
+deadlock situations due to limitations in the kernel.
 
 
 Usage
@@ -29,7 +32,7 @@ Example:
 
     channel_layer = asgi.IPCChannelLayer(
         prefix="aeracode",
-        channel_memory=200 * 1024 * 1024,
+        message_memory=200 * 1024 * 1024,
     )
 
     channel_layer.send("my_channel", {"text": "Hello ASGI"})
@@ -41,7 +44,7 @@ Example:
 Prefix to use for IPC objects under the root namespace. Defaults to ``asgi``.
 IPC layers on the same machine with the same prefix will talk to each other.
 
-``channel_memory``
+``message_memory``
 ~~~~~~~~~~~~~~~~~~
 
 The amount of shared memory to allocate to the channel storage, in bytes.

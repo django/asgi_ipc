@@ -17,7 +17,7 @@ setup(
     long_description=open(readme_path).read(),
     license='BSD',
     zip_safe=False,
-    py_modules=["asgi_ipc"],
+    packages=["asgi_ipc"],
     include_package_data=True,
     install_requires=[
         'six',
