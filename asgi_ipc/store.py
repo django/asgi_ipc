@@ -46,10 +46,17 @@ class BaseMemoryStore(object):
         try:
             # Load the value from the shared memory segment (if populated)
             self.mmap.seek(0)
-            try:
-                value = pickle.load(self.mmap)
-            except EOFError:
+            # Memory can be empty but have a length.  Pickle opcodes
+            # starts at 0x80.  If we read zero, memory was not
+            # initiated yet.
+            if not self.mmap.read_byte():
                 value = self.DEFAULT_FACTORY()
+            else:
+                self.mmap.seek(0)
+                try:
+                    value = pickle.load(self.mmap)
+                except EOFError:
+                    value = self.DEFAULT_FACTORY()
             # Let the inside run
             yield value
             # Dump the value back into the shared memory segment
