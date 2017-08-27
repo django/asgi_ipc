@@ -189,11 +189,14 @@ class GroupMemoryStore(BaseMemoryStore):
         Removes all members from the group who have expired, and returns the
         new list of members.
         """
-        with self.mutate_value() as value:
-            value[name] = {
-                item: expiry
-                for item, expiry in value[name].items()
-                if expiry >= time.time()
-            }
+        try:
+            with self.mutate_value() as value:
+                value[name] = {
+                    item: expiry
+                    for item, expiry in value[name].items()
+                    if expiry >= time.time()
+                }
+        except KeyError:
+            return []
         return value[name].keys()
 
