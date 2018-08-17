@@ -6,6 +6,8 @@ asgi_ipc
 
 .. image:: https://img.shields.io/pypi/v/asgi_ipc.svg
     :target: https://pypi.python.org/pypi/asgi_ipc
+    
+**NOTE: This is for Channels 1 only. It will not work on Channels 2 and there's no plans to port it.**
 
 An ASGI channel layer that uses POSIX shared memory IPC as its backing store
 (only works between processes on the same machine).
