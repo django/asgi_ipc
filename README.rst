@@ -12,9 +12,9 @@ asgi_ipc
 An ASGI channel layer that uses POSIX shared memory IPC as its backing store
 (only works between processes on the same machine).
 
-IPC is still a bit of a wild west of UNIX compatability, so if you find weird
+IPC is still a bit of a wild west of UNIX compatibility, so if you find weird
 errors, please file an issue with details and exact system specifications. In
-partcular, this module is tested and works well on Linux kernels and the Windows
+particular, this module is tested and works well on Linux kernels and the Windows
 Subsystem for Linux; it also works on Mac OS but will not be able to detect
 deadlock situations due to limitations in the kernel.
 
@@ -96,7 +96,7 @@ Per-channel capacity configuration. This lets you tweak the channel capacity
 based on the channel name, and supports both globbing and regular expressions.
 
 It should be a dict mapping channel name pattern to desired capacity; if the
-dict key is a string, it's intepreted as a glob, while if it's a compiled
+dict key is a string, it's interpreted as a glob, while if it's a compiled
 ``re`` object, it's treated as a regular expression.
 
 This example sets ``http.request`` to 200, all ``http.response!`` channels
